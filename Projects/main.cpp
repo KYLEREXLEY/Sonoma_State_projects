@@ -30,17 +30,16 @@ float THRESHOLD_LUX      = 20.0f;     // The variable X sets the buzzer threshol
 const float LUX_FULL_RED = 600.0f;    // fully red by this lux
 
 // ---------------- ADC ----------------
-#define ADC_MAX     1023.0
-#define ADC_VREF    3.2       
-#define VCC_VOLTS   3.3
-#define RFIXED_OHMS 10000.0   // ~10k on HW-486 (effective pot value)
+#define ADC_MAX   1023.0
+#define ADC_VREF  3.2       // NodeMCU/Wemos A0 effective full-scale
 
-// Calibrated constants for Lux Equation
-#define LDR_A 84300.0         
-#define LDR_B 0.67
+// --------- Direct Vout→Lux fit (from your Excel trendline) ---------
+// Trendline: Vout = A * ln(Lux) + B   (natural log)
+// Invert:    Lux  = exp( (Vout - B) / A )
+#define FIT_A   (-0.4037f)
+#define FIT_B   ( 2.8917f)
 
 // ---------------- Helper functions ----------------
-//When buzzerOn function equals true set HIGH when False Set LOW
 inline void buzzerOn(bool on) { digitalWrite(PIN_BUZZER, on ? HIGH : LOW); }
 
 // t=0 = white, t=1 = red (RGB is common-cathode)
@@ -53,28 +52,24 @@ inline void setRgbWhiteToRed(float t) {
   analogWrite(PIN_G, G);
   analogWrite(PIN_B, B);
 }
-//If Lux less then threshold t=0 if greater than then scale t relative to lux amount up to Lux_Full_RED threshold
+
+// If Lux less than threshold => t=0, else scale up to LUX_FULL_RED
 inline float luxToBlend(float lux) {
   if (lux <= THRESHOLD_LUX) return 0.0f;
   float t = (lux - THRESHOLD_LUX) / max(1.0f, (LUX_FULL_RED - THRESHOLD_LUX));
   return constrain(t, 0.0f, 1.0f);
 }
 
-// --- Convert A0 readings to Vout then to resistor readings R_LDR then to Lux
+// Convert A0 counts → Vout (volts)
 inline float adcToVout(int raw) {
-  return (raw / ADC_MAX) * ADC_VREF;  // volts at A0
+  return (raw / ADC_MAX) * ADC_VREF;
 }
-//Resistor readings of photoresistor centered around it being a 10k ohm pot
-inline float voutToRldr(float vout) {
-  // Vout = Vcc * (R_LDR / (R_LDR + R_fixed))  =>  R_LDR = R_fixed * Vout / (Vcc - Vout)
-  if (vout >= VCC_VOLTS - 0.001f) vout = VCC_VOLTS - 0.001f; // avoid div overflow
-  if (vout < 0.001f) vout = 0.001f;
-  return RFIXED_OHMS * (vout / (VCC_VOLTS - vout));
-}
-//Lux value calculated using the resistor readings and the 2 constants configured to give same results as phone
-inline float rldrToLux(float Rldr) {
-  // Lux = (A / R)^ (1/B) this shows that the equation is a logorithmic one since we have to do the inverse of a log equation to get LUX
-  return pow((LDR_A / Rldr), (1.0f / LDR_B));
+
+// Direct Vout → Lux using ln-fit (natural log)
+inline float luxFromVout(float vout) {
+  // keep vout away from extremes to avoid huge exponents
+  vout = constrain(vout, 0.05f, ADC_VREF - 0.05f);
+  return expf((vout - FIT_B) / FIT_A); //Best fit log equation inverted for Finding LUX
 }
 
 // ---------------- Setup ----------------
@@ -85,7 +80,7 @@ void setup() {
   pinMode(PIN_BUZZER, OUTPUT);
   buzzerOn(false);
 
-  analogWriteRange(1023);  // ESP8266 10-bit PWM
+  analogWriteRange(1023);  // ESP8266 10-bit ADC
   setRgbWhiteToRed(0.0f);  // start white
 
   Serial.begin(9600);
@@ -104,18 +99,18 @@ void loop() {
     }
   }
 
-  // Read LDR and compute Lux
+  // Read LDR and compute Lux directly from Vout
   int   raw   = analogRead(PIN_LDR_AO);   // 0..1023
   float vout  = adcToVout(raw);           // volts at A0
-  float Rldr  = voutToRldr(vout);         // ohms
-  float lux   = rldrToLux(Rldr);          // lux
+  float lux   = luxFromVout(vout);        // lux via ln-fit
 
-  // Actuate and print
+  // Actuate and print (each on its own line)
   if (lux < THRESHOLD_LUX) {
     buzzerOn(true);
     setRgbWhiteToRed(0.0f); // white below threshold
     Serial.print(F("Lux="));   Serial.print(lux, 1);
-    Serial.print(F("  Vout=")); Serial.print(vout, 3); Serial.println(F(" V  Buzzer=ON"));
+    Serial.print(F("  Vout=")); Serial.print(vout, 3);
+    Serial.println(F(" V  Buzzer=ON"));
   } else {
     buzzerOn(false);
     float t = luxToBlend(lux);
