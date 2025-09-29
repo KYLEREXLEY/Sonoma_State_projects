@@ -26,23 +26,23 @@ const uint8_t PIN_G      = D6;   // HW-479 G → D6
 const uint8_t PIN_B      = D7;   // HW-479 B → D7
 
 // ---------------- Behavior ----------------
-float THRESHOLD_LUX      = 20.0f;     // The variable X sets the buzzer threshold for Lux
-const float LUX_FULL_RED = 600.0f;    // fully red by this lux
+float THRESHOLD_LUX      = 20.0f;     // set your switch point
+const float LUX_FULL_RED = 500.0f;    // fully red by this lux
 
-// ---------------- ADC ----------------
-#define ADC_MAX   1023.0
-#define ADC_VREF  3.2       // NodeMCU/Wemos A0 effective full-scale
+// ---------------- ADC  ----------------
+#define ADC_MAX     1023.0
+#define ADC_VREF    3.2       
+#define VCC_VOLTS   3.3
+#define RFIXED_OHMS 10000.0   // ~10k on HW-486 (effective pot value)
 
-// --------- Direct Vout→Lux fit (from your Excel trendline) ---------
-// Trendline: Vout = A * ln(Lux) + B   (natural log)
-// Invert:    Lux  = exp( (Vout - B) / A )
-#define FIT_A   (-0.4037f)
-#define FIT_B   ( 2.8917f)
+// Calibrated for your readings 
+#define LDR_A 84300.0         // ohm * lux^B
+#define LDR_B 0.67
 
-// ---------------- Helper functions ----------------
+// ---------------- Helpers ----------------
 inline void buzzerOn(bool on) { digitalWrite(PIN_BUZZER, on ? HIGH : LOW); }
 
-// t=0 = white, t=1 = red (RGB is common-cathode)
+// t=0 → white, t=1 → red (common-cathode)
 inline void setRgbWhiteToRed(float t) {
   t = constrain(t, 0.0f, 1.0f);
   int R = 1023;
@@ -53,23 +53,28 @@ inline void setRgbWhiteToRed(float t) {
   analogWrite(PIN_B, B);
 }
 
-// If Lux less than threshold => t=0, else scale up to LUX_FULL_RED
 inline float luxToBlend(float lux) {
   if (lux <= THRESHOLD_LUX) return 0.0f;
   float t = (lux - THRESHOLD_LUX) / max(1.0f, (LUX_FULL_RED - THRESHOLD_LUX));
   return constrain(t, 0.0f, 1.0f);
 }
 
-// Convert A0 counts → Vout (volts)
+// --- Convert A0 reading → Vout → R_LDR → Lux (your exact equations) ---
 inline float adcToVout(int raw) {
-  return (raw / ADC_MAX) * ADC_VREF;
+  return (raw / ADC_MAX) * ADC_VREF;  // volts at A0
 }
 
-// Direct Vout → Lux using ln-fit (natural log)
-inline float luxFromVout(float vout) {
-  // keep vout away from extremes to avoid huge exponents
-  vout = constrain(vout, 0.05f, ADC_VREF - 0.05f);
-  return expf((vout - FIT_B) / FIT_A); //Best fit log equation inverted for Finding LUX
+inline float voutToRldr(float vout) {
+  // LDR at bottom (to GND), fixed resistor to VCC:
+  // Vout = Vcc * (R_LDR / (R_LDR + R_fixed))  =>  R_LDR = R_fixed * Vout / (Vcc - Vout)
+  if (vout >= VCC_VOLTS - 0.001f) vout = VCC_VOLTS - 0.001f; // avoid div overflow
+  if (vout < 0.001f) vout = 0.001f;
+  return RFIXED_OHMS * (vout / (VCC_VOLTS - vout));
+}
+
+inline float rldrToLux(float Rldr) {
+  // Lux = (A / R)^ (1/B)
+  return pow((LDR_A / Rldr), (1.0f / LDR_B));
 }
 
 // ---------------- Setup ----------------
@@ -84,7 +89,7 @@ void setup() {
   setRgbWhiteToRed(0.0f);  // start white
 
   Serial.begin(9600);
-  Serial.println(F("Type 'B' to buzz for 5 seconds."));
+  Serial.println(F("Type 'B' to buzz for ~5 seconds."));
 }
 
 // ---------------- Loop (delay-based) ----------------
@@ -93,31 +98,31 @@ void loop() {
   if (Serial.available() > 0) {
     char c = Serial.read();
     if (c == 'B' || c == 'b') {
-      Serial.println(F("Buzzer ON (5s)"));
+      Serial.println(F("[CMD] Buzzer ON (~5s)"));
       buzzerOn(true); delay(5000); buzzerOn(false);
-      Serial.println(F("Buzzer OFF"));
+      Serial.println(F("[CMD] Buzzer OFF"));
     }
   }
 
-  // Read LDR and compute Lux directly from Vout
+  // Read LDR and compute Lux
   int   raw   = analogRead(PIN_LDR_AO);   // 0..1023
   float vout  = adcToVout(raw);           // volts at A0
-  float lux   = luxFromVout(vout);        // lux via ln-fit
+  float Rldr  = voutToRldr(vout);         // ohms
+  float lux   = rldrToLux(Rldr);          // lux
 
-  // Actuate and print (each on its own line)
+  // Actuate and print
   if (lux < THRESHOLD_LUX) {
     buzzerOn(true);
     setRgbWhiteToRed(0.0f); // white below threshold
     Serial.print(F("Lux="));   Serial.print(lux, 1);
-    Serial.print(F("  Vout=")); Serial.print(vout, 3);
-    Serial.println(F(" V  Buzzer=ON"));
+    Serial.print(F("  Vout=")); Serial.print(vout, 3); Serial.println(F(" V  Buzzer=ON"));
   } else {
     buzzerOn(false);
     float t = luxToBlend(lux);
     setRgbWhiteToRed(t);
     Serial.print(F("Lux="));   Serial.print(lux, 1);
     Serial.print(F("  Vout=")); Serial.print(vout, 3);
-    Serial.println(F(" V  Buzzer=OFF"));
+    Serial.println(F(" V  Buzzer=OFF")); 
   }
 
   delay(500);  // sample every 0.5 s
