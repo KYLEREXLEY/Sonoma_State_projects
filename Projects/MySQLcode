@@ -1,0 +1,72 @@
+-- 1) sensor_register: 5 different sensors, manufacturer names up to 10 chars
+CREATE TABLE sensor_register (
+  node_name    VARCHAR(10) PRIMARY KEY,
+  manufacturer VARCHAR(10) NOT NULL,
+  longitude    DECIMAL(15,8),
+  latitude     DECIMAL(15,8)
+);
+
+-- 2) sensor_data: readings every 30 minutes; FK ensures only registered nodes can insert
+CREATE TABLE sensor_data (
+  node_name     VARCHAR(10) NOT NULL,
+  time_received DATETIME     NOT NULL,
+  temperature   DECIMAL(6,2) NOT NULL,
+  humidity      DECIMAL(6,2) NOT NULL,
+  PRIMARY KEY (node_name, time_received),
+  CONSTRAINT fk_sensor
+    FOREIGN KEY (node_name) REFERENCES sensor_register(node_name)
+      ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- 3) Register 5 sensors with distinct manufacturers
+INSERT INTO sensor_register (node_name, manufacturer, longitude, latitude) VALUES
+  ('node_1','Acme',     -73.935242,  40.730610),
+  ('node_2','Globex',   -122.419416, 37.774929),
+  ('node_3','Initech',  -0.127758,   51.507351),
+  ('node_4','Umbrella', 151.209290, -33.868820),
+  ('node_5','Soylent',   139.691711, 35.689487);
+
+-- 4) Insert readings: start 2022-10-01 11:00:00, every 30 minutes, 4 entries per sensor
+INSERT INTO sensor_data (node_name, time_received, temperature, humidity) VALUES
+-- node_1
+('node_1','2022-10-01 11:00:00',  22.50, 45.00),
+('node_1','2022-10-01 11:30:00',  23.10, 44.20),
+('node_1','2022-10-01 12:00:00',  24.00, 43.50),
+('node_1','2022-10-01 12:30:00',  24.60, 42.90),
+
+-- node_2
+('node_2','2022-10-01 11:00:00',  18.20, 55.30),
+('node_2','2022-10-01 11:30:00',  18.70, 54.90),
+('node_2','2022-10-01 12:00:00',  19.10, 54.10),
+('node_2','2022-10-01 12:30:00',  19.40, 53.60),
+
+-- node_3
+('node_3','2022-10-01 11:00:00',  15.00, 65.00),
+('node_3','2022-10-01 11:30:00',  15.40, 64.20),
+('node_3','2022-10-01 12:00:00',  15.90, 63.80),
+('node_3','2022-10-01 12:30:00',  16.30, 63.10),
+
+-- node_4
+('node_4','2022-10-01 11:00:00',  27.80, 48.00),
+('node_4','2022-10-01 11:30:00',  28.10, 47.50),
+('node_4','2022-10-01 12:00:00',  28.40, 47.00),
+('node_4','2022-10-01 12:30:00',  28.60, 46.70),
+
+-- node_5
+('node_5','2022-10-01 11:00:00',  20.00, 50.00),
+('node_5','2022-10-01 11:30:00',  20.50, 49.20),
+('node_5','2022-10-01 12:00:00',  21.10, 48.40),
+('node_5','2022-10-01 12:30:00',  21.60, 47.80);
+
+-- 5) View combining both tables 
+CREATE OR REPLACE VIEW sensor_combined AS
+SELECT
+  r.node_name,
+  r.manufacturer,
+  r.longitude,
+  r.latitude,
+  d.time_received,
+  d.temperature,
+  d.humidity
+FROM sensor_register AS r
+JOIN sensor_data     AS d USING (node_name);
