@@ -17,6 +17,53 @@ try {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]
     );
+/* --- REGISTER MODE: add a node to sensor_register via URL/POST --- */
+$regAction = $_POST['action'] ?? $_GET['action'] ?? null;
+if ($regAction === 'register') {
+    header('Content-Type: application/json');
+
+    $regNode = $_POST['node_name'] ?? $_GET['node_name'] ?? null;
+    $mfg     = $_POST['manufacturer'] ?? $_GET['manufacturer'] ?? null;
+    $lon     = $_POST['longitude'] ?? $_GET['longitude'] ?? null;
+    $lat     = $_POST['latitude']  ?? $_GET['latitude']  ?? null;
+
+    // Basic validation
+    if (!$regNode || !$mfg) {
+        echo json_encode(['status'=>400,'message'=>'node_name and manufacturer are required']); exit;
+    }
+    // enforce <=10 chars 
+    if (strlen($regNode) > 10 || strlen($mfg) > 10) {
+        echo json_encode(['status'=>400,'message'=>'node_name and manufacturer must be ≤ 10 chars']); exit;
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO sensor_register (node_name, manufacturer, longitude, latitude)
+            VALUES (:n, :m, :lon, :lat)
+        ");
+        $stmt->execute([
+            ':n'   => $regNode,
+            ':m'   => $mfg,
+            ':lon' => ($lon === null ? null : (float)$lon),
+            ':lat' => ($lat === null ? null : (float)$lat),
+        ]);
+
+        echo json_encode([
+            'status'       => 200,
+            'message'      => 'Registered',
+            'node_name'    => $regNode,
+            'manufacturer' => $mfg,
+            'longitude'    => ($lon === null ? null : (float)$lon),
+            'latitude'     => ($lat === null ? null : (float)$lat)
+        ]); 
+        exit;
+    } catch (PDOException $e) {
+        if (!empty($e->errorInfo[1]) && $e->errorInfo[1] == 1062) {
+            echo json_encode(['status'=>409,'message'=>'Node already registered']); exit;
+        }
+        echo json_encode(['status'=>500,'message'=>'Database error: '.$e->getMessage()]); exit;
+    }
+}
 
     /* --- API MODE: insert via POST/GET params and return JSON, then exit --- */
     // Accept POST first, fall back to GET
