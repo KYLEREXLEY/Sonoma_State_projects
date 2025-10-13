@@ -17,6 +17,18 @@ try {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]
     );
+// ---- Simple Base64 decode once before any logic ----
+if (!empty($_SERVER['QUERY_STRING'])) {
+    $raw = $_SERVER['QUERY_STRING'];
+    $decoded = base64_decode($raw, true);
+    if ($decoded !== false) {
+        parse_str($decoded, $p);
+        // merge decoded params into GET/POST so normal logic works
+        $_GET  = $p + $_GET;
+        $_POST = $p + $_POST;
+    }
+}
+
 /* --- REGISTER MODE: add a node to sensor_register via URL/POST --- */
 $regAction = $_POST['action'] ?? $_GET['action'] ?? null;
 if ($regAction === 'register') {
