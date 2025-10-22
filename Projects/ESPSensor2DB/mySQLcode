@@ -1,0 +1,70 @@
+-- ===== table: sensor_register (names up to 10 chars, as in your hard-coded version) =====
+DROP TABLE IF EXISTS sensor_register;
+CREATE TABLE sensor_register (
+  node_name    VARCHAR(10) PRIMARY KEY,
+  manufacturer VARCHAR(10) NOT NULL,
+  longitude    DECIMAL(15,8),
+  latitude     DECIMAL(15,8),
+  active       TINYINT(1) NOT NULL DEFAULT 1,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ===== table: sensor_data =====
+-- • time_required enforced by NOT NULL
+-- • temp/hum can be NULL (because Node_1 sends humidity-only; Node_2 sends temperature-only)
+-- • tz stored as the IANA name you send (e.g., America/Los_Angeles)
+DROP TABLE IF EXISTS sensor_data;
+CREATE TABLE sensor_data (
+  id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+  node_name     VARCHAR(10) NOT NULL,
+  time_received DATETIME(6) NOT NULL,       -- must be present
+  tz            VARCHAR(64) NOT NULL,
+  temperature   DECIMAL(6,2) NULL,
+  humidity      DECIMAL(6,2) NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_sd_reg FOREIGN KEY (node_name)
+    REFERENCES sensor_register(node_name)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+
+  -- generated columns to allow a UNIQUE "duplicate" check even with NULLs:
+  temp_key DECIMAL(8,2) AS (IFNULL(temperature, -9999.00)) PERSISTENT,
+  hum_key  DECIMAL(8,2) AS (IFNULL(humidity,    -9999.00)) PERSISTENT,
+
+  -- same node + same timestamp + same effective values => duplicate
+  UNIQUE KEY uq_sd_dedupe (node_name, time_received, temp_key, hum_key),
+
+  KEY idx_sd_node_time (node_name, time_received)
+) ENGINE=InnoDB;
+
+-- ===== table: sensor_activity (counter of accepted, unique inserts per node) =====
+DROP TABLE IF EXISTS sensor_activity;
+CREATE TABLE sensor_activity (
+  node_name VARCHAR(10) PRIMARY KEY,
+  count     BIGINT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_sa_reg FOREIGN KEY (node_name)
+    REFERENCES sensor_register(node_name)
+    ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+-- ===== OPTIONAL seed: register node_1 and node_2  =====
+INSERT INTO sensor_register (node_name, manufacturer, longitude, latitude, active) VALUES
+  ('node_1','man_1', -122.701000, 38.340000, 1),
+  ('node_2','man_2', -122.701000, 38.340000, 1)
+ON DUPLICATE KEY UPDATE manufacturer=VALUES(manufacturer);
+
+INSERT IGNORE INTO sensor_activity (node_name, count) VALUES
+  ('node_1', 0), ('node_2', 0);
+
+-- ===== optional view =====
+CREATE OR REPLACE VIEW sensor_combined AS
+SELECT
+  r.node_name,
+  r.manufacturer,
+  r.longitude,
+  r.latitude,
+  d.time_received,
+  d.tz,
+  d.temperature,
+  d.humidity
+FROM sensor_register AS r
+JOIN sensor_data     AS d USING (node_name);
