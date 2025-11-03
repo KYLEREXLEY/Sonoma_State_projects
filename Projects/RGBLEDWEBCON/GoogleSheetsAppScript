@@ -1,0 +1,85 @@
+// ===== Code.gs (LED + RGB logger; no "Publish to web") =====
+const SPREADSHEET_ID = 'ID';  // between /d/ and /edit
+const SHEET = 'tab name';
+
+function sh_() { return SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET); }
+
+function clamp_(x, lo, hi) { x = Number(x); return isNaN(x) ? lo : Math.min(Math.max(x, lo), hi); }
+function to01_(v) { return clamp_(v, 0, 1); }
+function to255_(v){ return clamp_(v, 0, 255); }
+
+function appendRow_(p) {
+  // p may include ts (epoch ms), led (0/1 or "ON"/"OFF"), r/g/b (0..255)
+  const t = p.ts ? new Date(Number(p.ts)) : new Date();
+  let led = p.led;
+  if (typeof led === 'string') led = (led.toUpperCase() === 'ON') ? 1 : 0;
+  led = to01_(led);
+  const r = to255_(p.r), g = to255_(p.g), b = to255_(p.b);
+  sh_().appendRow([t, led, r, g, b]);
+}
+
+function readRows_(limit) {
+  const s = sh_();
+  const last = s.getLastRow();
+  if (last < 2) return [];
+  const vals = s.getRange(2, 1, last - 1, 5).getValues(); // A2:E
+  return vals
+    .filter(r => r[0]) // timestamp present
+    .map(r => ({
+      ts: new Date(r[0]).getTime(),
+      led: Number(r[1]),
+      r: Number(r[2]),
+      g: Number(r[3]),
+      b: Number(r[4]),
+    }))
+    .slice(-limit);
+}
+
+function respond_(obj, e) {
+  const body = JSON.stringify(obj);
+  const cb = e?.parameter?.callback;
+  if (cb) {
+    return ContentService.createTextOutput(`${cb}(${body})`)
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(body)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// GET modes:
+// - Append: ?led=1&r=10&g=20&b=30[&ts=...]
+// - Read:   ?mode=data (last 500 rows)
+// - Stats:  ?mode=stats (min/max/avg per channel)
+function doGet(e) {
+  const p = e?.parameter || {};
+  if (p.led !== undefined || p.r !== undefined || p.g !== undefined || p.b !== undefined) {
+    appendRow_(p);
+    return respond_({ ok: true }, e);
+  }
+  const mode = (p.mode || 'data').toLowerCase();
+  if (mode === 'data') {
+    return respond_({ rows: readRows_(500) }, e);
+  }
+  if (mode === 'stats') {
+    const rows = readRows_(1000);
+    const arr = (k) => rows.map(o => Number(o[k])).filter(v => !isNaN(v));
+    const mk = (xs) => xs.length ? { min: Math.min(...xs), max: Math.max(...xs), avg: xs.reduce((a,b)=>a+b,0)/xs.length } : {min:null,max:null,avg:null};
+    return respond_({
+      led: mk(arr('led')),
+      r: mk(arr('r')), g: mk(arr('g')), b: mk(arr('b')),
+    }, e);
+  }
+  return respond_({ ok: true }, e);
+}
+
+// POST JSON: {"led":1,"r":10,"g":20,"b":30,"ts":1730560000000}
+function doPost(e) {
+  try {
+    const body = e?.postData?.contents || '{}';
+    const p = JSON.parse(body);
+    appendRow_(p);
+    return respond_({ ok: true }, e);
+  } catch (err) {
+    return respond_({ ok: false, error: String(err) }, e);
+  }
+}
