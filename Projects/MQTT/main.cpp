@@ -22,8 +22,8 @@
 #include<PubSubClient.h>
 
 // ------------ WiFi CONFIG ------------
-const char* ssid     = "Galaxy S24 E409";   // <-- WiFi SSID
-const char* password = "Giants3322!";       // <-- WiFi password
+const char* ssid     = "";   // <-- WiFi SSID
+const char* password = "";       // <-- WiFi password
 
 // ------------ MQTT CONFIG ------------
 const char* mqtt_server = "broker.mqtt-dashboard.com";
